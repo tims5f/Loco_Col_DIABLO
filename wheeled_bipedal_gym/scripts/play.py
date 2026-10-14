@@ -120,7 +120,7 @@ def play(args):
         else:
             actions = policy(obs.detach())
 
-        env.commands[:, 0] = 0.0
+        env.commands[:, 0] = 0.5
         env.commands[:, 2] = 0.23  # + 0.07 * np.sin(i * 0.01)
         env.commands[:, 3] = 0
 

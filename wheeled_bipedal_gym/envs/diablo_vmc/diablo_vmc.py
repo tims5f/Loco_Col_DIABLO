@@ -185,6 +185,35 @@ class DiabloVMC(WheeledBipedal):
         )
         return obs_buf
 
+    def _get_action_layout(self):
+        return [
+            (0, "left_theta0", "theta position", self.cfg.control.action_scale_theta),
+            (1, "left_L0", "leg length", self.cfg.control.action_scale_l0),
+            (2, "left_wheel_joint", "wheel velocity", self.cfg.control.action_scale_vel),
+            (3, "right_theta0", "theta position", self.cfg.control.action_scale_theta),
+            (4, "right_L0", "leg length", self.cfg.control.action_scale_l0),
+            (5, "right_wheel_joint", "wheel velocity", self.cfg.control.action_scale_vel),
+        ]
+
+    def _get_observation_layout(self):
+        return [
+            ("base_ang_vel", 3, self.obs_scales.ang_vel, "base angular velocity"),
+            ("projected_gravity", 3, 1.0, "projected gravity"),
+            (
+                "commands",
+                3,
+                self.commands_scale.detach().cpu().tolist(),
+                "lin_vel_x, ang_vel_yaw, height",
+            ),
+            ("theta0", 2, self.obs_scales.dof_pos, "virtual angle L/R"),
+            ("theta0_dot", 2, self.obs_scales.dof_vel, "virtual angle vel L/R"),
+            ("L0", 2, self.obs_scales.l0, "leg length L/R"),
+            ("L0_dot", 2, self.obs_scales.l0_dot, "leg length vel L/R"),
+            ("wheel_pos", 2, self.obs_scales.wheel_pos, "dof_pos[[2,5]]"),
+            ("wheel_vel", 2, self.obs_scales.dof_vel, "dof_vel[[2,5]]"),
+            ("actions", self.num_actions, 1.0, "previous policy actions"),
+        ]
+
     def _compute_torques(self, actions):
         """Compute torques from actions.
             Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.

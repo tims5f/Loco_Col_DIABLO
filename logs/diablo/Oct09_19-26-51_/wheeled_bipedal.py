@@ -88,6 +88,129 @@ class WheeledBipedal(BaseTask):
         self._prepare_reward_function()
         self.init_done = True
 
+    def _format_train_info_value(self, value):
+        if isinstance(value, torch.Tensor):
+            value = value.detach().cpu()
+            if value.numel() == 1:
+                value = value.item()
+            else:
+                return "[" + ", ".join(
+                    self._format_train_info_value(v) for v in value.flatten().tolist()
+                ) + "]"
+        if isinstance(value, float):
+            return f"{value:.6g}"
+        return str(value)
+
+    def _tensor_env_range(self, tensor, column):
+        values = tensor[:, column].detach().cpu()
+        min_value = values.min().item()
+        max_value = values.max().item()
+        if abs(min_value - max_value) < 1e-12:
+            return self._format_train_info_value(min_value)
+        return (
+            f"{self._format_train_info_value(min_value)}"
+            f"..{self._format_train_info_value(max_value)}"
+        )
+
+    def _get_action_layout(self):
+        layout = []
+        for i, name in enumerate(self.dof_names):
+            if i in [2, 5]:
+                target = "velocity"
+                scale = self.cfg.control.vel_action_scale
+            else:
+                target = "position"
+                scale = self.cfg.control.pos_action_scale
+            layout.append((i, name, target, scale))
+        return layout
+
+    def _get_observation_layout(self):
+        return [
+            ("base_ang_vel", 3, self.obs_scales.ang_vel, "base angular velocity"),
+            ("projected_gravity", 3, 1.0, "projected gravity"),
+            (
+                "commands",
+                3,
+                self.commands_scale.detach().cpu().tolist(),
+                "lin_vel_x, ang_vel_yaw, height",
+            ),
+            (
+                "dof_pos_error",
+                4,
+                self.obs_scales.dof_pos,
+                "dof_pos[[0,1,3,4]] - default_dof_pos",
+            ),
+            ("dof_vel", self.num_dof, self.obs_scales.dof_vel, "all dofs"),
+            ("actions", self.num_actions, 1.0, "previous policy actions"),
+        ]
+
+    def print_training_info(self):
+        print("\n========================= Training data layout =========================")
+        print(f"task env: {self.__class__.__name__}")
+        print(
+            f"num_envs={self.num_envs}, num_obs={self.num_obs}, "
+            f"num_privileged_obs={self.num_privileged_obs}, "
+            f"num_actions={self.num_actions}, dt={self._format_train_info_value(self.dt)}"
+        )
+
+        print("\n[DOF / joint order]")
+        print(f"{'idx':>3}  {'joint':<24}  {'default_pos':>14}  {'Kp':>14}  {'Kd':>14}  {'torque_scale':>14}")
+        print("-" * 93)
+        for index, name in enumerate(self.dof_names):
+            print(
+                f"{index:>3}  {name:<24}  "
+                f"{self._tensor_env_range(self.default_dof_pos, index):>14}  "
+                f"{self._tensor_env_range(self.p_gains, index):>14}  "
+                f"{self._tensor_env_range(self.d_gains, index):>14}  "
+                f"{self._tensor_env_range(self.torques_scale, index):>14}"
+            )
+
+        print("\n[Action order]")
+        print(f"{'idx':>3}  {'action':<24}  {'target':<16}  {'scale':>12}")
+        print("-" * 61)
+        for index, name, target, scale in self._get_action_layout():
+            print(
+                f"{index:>3}  {name:<24}  {target:<16}  "
+                f"{self._format_train_info_value(scale):>12}"
+            )
+
+        print("\n[Observation order]")
+        print(f"{'range':>9}  {'dim':>3}  {'name':<18}  {'scale':<22}  source")
+        print("-" * 88)
+        start = 0
+        for name, dim, scale, source in self._get_observation_layout():
+            end = start + dim
+            print(
+                f"{start:03d}:{end:03d}  {dim:>3}  {name:<18}  "
+                f"{self._format_train_info_value(scale):<22}  {source}"
+            )
+            start = end
+        if start != self.num_obs:
+            print(
+                f"WARNING: observation layout total dim is {start}, "
+                f"but cfg.env.num_observations is {self.num_obs}"
+            )
+
+        print("\n[Reward scales]")
+        raw_reward_scales = class_to_dict(self.cfg.rewards.scales)
+        print(
+            "reward = reward_function * effective_scale_per_step; "
+            f"single term clip = +/-{self._format_train_info_value(self.cfg.rewards.clip_single_reward * self.dt)}"
+        )
+        print(f"{'reward':<30}  {'raw':>14}  {'effective/step':>16}")
+        print("-" * 64)
+        for name, raw_scale in raw_reward_scales.items():
+            if raw_scale == 0:
+                continue
+            effective_scale = self.reward_scales.get(name)
+            if effective_scale is None:
+                effective_scale = raw_scale * self.dt
+            print(
+                f"{name:<30}  {self._format_train_info_value(raw_scale):>14}  "
+                f"{self._format_train_info_value(effective_scale):>16}"
+            )
+        print("=======================================================================\n")
+
     def step(self, actions):
         """Apply actions, simulate, call self.post_physics_step()
 

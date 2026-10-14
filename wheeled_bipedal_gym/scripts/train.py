@@ -40,6 +40,8 @@ import torch
 
 def train(args):
     env, env_cfg = task_registry.make_env(name=args.task, args=args)
+    if hasattr(env, "print_training_info"):
+        env.print_training_info()
     ppo_runner, train_cfg = task_registry.make_alg_runner(
         env=env, name=args.task, args=args
     )
